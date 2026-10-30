@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auto Posting — YouTube & Facebook</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="header">
+  <div class="brand">
+    <div class="logo">▶</div>
+    <div>
+      <h1>Auto Posting</h1>
+      <p>YouTube Shorts + Facebook Reels</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <span class="status" id="statusDot"><i></i><em>Memuat…</em></span>
+    <button class="btn sm" id="btnRefresh" title="Muat ulang data">↻</button>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- ===== KIRI: menu + file (video & thumbnail) ===== -->
+  <aside class="side side-left">
+    <nav class="sidenav">
+      <button data-tab="posting" class="active"><span class="step">1</span> Posting</button>
+      <button data-tab="compile"><span class="step">2</span> Kompilasi</button>
+      <button data-tab="gdrive"><span class="step">3</span> Google Drive</button>
+      <button data-tab="channel"><span class="step">4</span> Channel</button>
+    </nav>
+
+    <div class="card side-card">
+      <div class="card-head"><h2>🎞️ File video</h2></div>
+      <p class="muted" style="margin:0 0 4px">MP4 vertikal 9:16, ≤ 60 detik.</p>
+      <div id="dropZone" class="drop">
+        <div class="drop-title">Tarik & letakkan video di sini</div>
+        <div class="drop-sub">atau <label class="link">klik untuk pilih file<input id="fileInput" type="file" accept="video/*" hidden></label></div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ===== TENGAH: detail postingan ===== -->
+  <main class="wrap">
+
+    <!-- ============ TAB 1 : POSTING ============ -->
+    <section id="tab-posting" class="tab-panel active">
+      <div class="card">
+        <div class="card-head"><h2>👁️ Pratinjau upload</h2><select id="previewSel" style="max-width:220px"></select></div>
+        <div id="previewEmpty" class="empty">Belum ada video di antrean.<br>Upload di bawah 👇</div>
+        <div id="previewBody" style="display:none">
+          <div class="grid2">
+            <div>
+              <video id="previewVideo" controls playsinline preload="metadata"></video>
+              <p class="muted" id="previewInfo"></p>
+            </div>
+            <div>
+              <img id="previewThumb" class="thumb-preview" alt="thumbnail">
+              <p class="muted" id="previewNoThumb" style="display:none">Belum ada thumbnail.</p>
+              <p class="muted" id="previewMeta"></p>
+            </div>
+          </div>
+          <div class="grid2">
+            <div id="pvVideoWrap"><div class="field"><label>Upload video</label><input type="file" id="pvVideoFile" accept="video/*"></div></div>
+            <div id="pvThumbWrap"><div class="field"><label>Upload thumbnail <span class="muted">JPG/PNG ≤2MB</span></label><input type="file" id="pvThumbFile" accept="image/jpeg,image/png"></div></div>
+          </div>
+          <div class="row">
+            <button class="btn sm" id="btnPreviewEdit">Edit detail</button>
+            <button class="btn sm danger" id="btnPvThumbDel">Hapus thumbnail</button>
+            <button class="btn sm danger" id="btnPvVideoDel">Hapus video</button>
+            <button class="btn sm" id="btnPvVideoShow" style="display:none">＋ Video baru</button>
+          </div>
+          <p class="muted" id="pvMsg"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TAB 2 : KOMPILASI ============ -->
+    <section id="tab-compile" class="tab-panel">
+      <div class="card">
+        <div class="card-head"><h2>🏆 Kompilasi Otomatis</h2><span class="muted" id="compileMemoryInfo"></span></div>
+        <p class="muted">Gabung beberapa video dari folder Google Drive publik jadi satu video vertikal 1080×1920: intro judul → kartu <b>JUARA n … JUARA 1</b> → video diputar berurutan. Butuh FFmpeg.</p>
+
+        <div class="field">
+          <label>Sumber video</label>
+          <div class="seg" id="sourceSeg">
+            <label><input type="radio" name="compileSource" value="gdrive" checked> ☁️ Google Drive</label>
+            <label><input type="radio" name="compileSource" value="local"> 💾 Video lokal</label>
+          </div>
+          <small class="muted" id="sourceHint">Video diambil dari folder Google Drive publik (diunduh saat render).</small>
+        </div>
+
+        <!-- ===== SUMBER: GOOGLE DRIVE ===== -->
+        <div id="srcGdrive">
+          <div class="field"><label>Folder Google Drive</label>
+            <div class="row" style="gap:6px">
+              <select id="compileLinkSel" style="flex:1"><option value="">— pilih link tersimpan —</option></select>
+              <button type="button" class="btn sm" id="btnSaveLink" title="Simpan link di input bawah ke daftar">＋ Simpan</button>
+              <button type="button" class="btn sm" id="btnManageLinks" title="Kelola link tersimpan">🗑 Kelola</button>
+            </div>
+            <input id="compileFolderLink" placeholder="https://drive.google.com/drive/folders/..." style="margin-top:6px">
+            <div class="row" style="margin-top:6px;align-items:center;gap:6px;flex-wrap:wrap">
+              <span class="muted" id="folderVideoCount"></span>
+              <button type="button" class="btn xs" id="btnCountVideos" title="Hitung ulang jumlah video">↻ Hitung</button>
+              <button type="button" class="btn xs" id="btnUpdateFolder" title="Cek video terbaru dari folder">🔄 Update</button>
+              <button type="button" class="btn xs primary" id="btnDownloadAll" title="Download semua video folder ke komputer">⬇ Download semua</button>
+            </div>
+            <div id="driveFolderFiles" class="drive-files" style="margin-top:8px"></div>
+            <div id="dlAllProgress" style="margin-top:8px"></div>
+          </div>
+        </div>
+
+        <!-- ===== SUMBER: VIDEO LOKAL ===== -->
+        <div id="srcLocal" style="display:none">
+          <div class="field">
+            <label>Video lokal di komputer <span class="muted" id="localVideoCount"></span></label>
+            <div class="row" style="gap:6px;flex-wrap:wrap">
+              <input id="localPathInput" placeholder="Path file video, cth: D:\klip\video1.mp4" style="flex:1;min-width:200px">
+              <button type="button" class="btn sm" id="btnAddLocalPath" title="Tambah video dari path">＋ Tambah path</button>
+              <label class="btn sm" style="margin:0;cursor:pointer" title="Pilih file video dari komputer">
+                📁 Pilih file<input id="localFileInput" type="file" accept="video/*" multiple hidden>
+              </label>
+            </div>
+            <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">
+              <input id="ytUrlInput" placeholder="Link YouTube: https://www.youtube.com/shorts/xxxx" style="flex:1;min-width:220px">
+              <button type="button" class="btn sm" id="btnAddYouTube" title="Download video dari YouTube">▶ YouTube</button>
+            </div>
+            <div id="ytProgress" style="margin-top:8px"></div>
+            <div id="localVideoList" class="drive-files" style="margin-top:8px"></div>
+          </div>
+        </div>
+
+        <div class="channel-picker">
+          <div class="card-head"><h2>📡 Channel</h2><button class="btn sm primary" id="btnAddYT2">+ YT</button></div>
+          <div class="field" style="margin-bottom:0">
+            <label>Tujuan upload</label>
+            <select id="groupSel"></select>
+            <small class="muted" id="groupHint"></small>
+          </div>
+          <div id="accountList" class="acclist" style="display:none"></div>
+          <div class="target" id="targetBox" style="display:none">
+            <div class="target-icon" id="targetIcon">?</div>
+            <div class="target-meta"><b id="targetAccount">Belum pilih akun</b><span id="targetMeta">Pilih akun di atas</span></div>
+          </div>
+        </div>
+
+        <details class="compile-settings">
+          <summary>⚙ Nama settingan — Kompilasi standar</summary>
+          <div class="compile-settings-body">
+            <div class="field"><label>Filter judul <span class="muted">(opsional — hanya video dengan kata ini ikut)</span></label>
+              <input id="compileFilter" placeholder="cth: TRY NOT TO LAUGH">
+            </div>
+            <div class="grid2">
+              <div class="field"><label>Judul kompilasi</label><input id="compileTitle" value="TOP VIDEO LUCU" maxlength="60"></div>
+              <div class="field"><label>Subjudul</label><input id="compileSubtitle" value="KOMPILASI PILIHAN" maxlength="60"></div>
+            </div>
+
+            <div class="field"><label>Kualitas video</label>
+              <select id="compileQuality">
+                <option value="18">HD (CRF 18)</option>
+                <option value="22" selected>Sedang (CRF 22)</option>
+                <option value="26">Hemat (CRF 26)</option>
+              </select>
+            </div>
+
+          <!-- Sistem otomatis: target durasi 60 detik, resolusi 1080×1920,
+             encoder otomatis memilih GPU bila tersedia dan fallback ke CPU. -->
+        <input type="hidden" id="compileDuration" value="60">
+        <input type="hidden" id="compileHeight" value="1920">
+        <input type="hidden" id="compileEncoder" value="auto">
+        <input type="hidden" id="compileCount" value="5">
+
+        <div class="field"><label>Watermark <span class="muted">(opsional)</span></label>
+          <div class="grid2">
+            <div class="field"><input id="wmText" placeholder="cth: @channelku"></div>
+            <div class="field"><select id="wmPosition">
+              <option value="br">Kanan-bawah</option><option value="bl">Kiri-bawah</option>
+              <option value="tr">Kanan-atas</option><option value="tl">Kiri-atas</option>
+              <option value="tc">Tengah-atas</option><option value="bc">Tengah-bawah</option><option value="cc">Tengah</option>
+            </select></div>
+          </div>
+          <div class="grid2">
+            <div class="field"><label class="muted">Ukuran</label><input type="number" id="wmSize" value="40" min="12" max="160"></div>
+            <div class="field"><label class="muted">Warna</label><input type="color" id="wmColor" value="#ffffff" style="height:34px"></div>
+            <div class="field"><label class="muted">Opasitas <span id="wmOpacityVal">0.7</span></label><input type="range" id="wmOpacity" min="0.05" max="1" step="0.05" value="0.7"></div>
+          </div>
+        </div>
+        </div>
+        </details>
+
+        <div class="field"><label class="check"><input type="checkbox" id="compileUnique" checked> Jangan ulangi video dalam satu render</label></div>
+
+        <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px">
+          <button class="btn primary" id="btnCompileFull">🎬 Render langsung</button>
+          <button class="btn" id="btnSchedule" title="Jadwalkan kompilasi otomatis">🗓 Jadwal</button>
+          <button class="btn danger" id="btnCompileCancel" style="display:none">✕ Batalkan</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>📁 Output Kompilasi</h2><button class="btn sm" id="btnRefreshOutputs">↻</button></div>
+        <div id="outputList" class="drive-files"></div>
+      </div>
+    </section>
+
+    <!-- ============ TAB 3 : GOOGLE DRIVE ============ -->
+    <section id="tab-gdrive" class="tab-panel">
+      <div class="card">
+        <div class="card-head"><h2>📁 Google Drive</h2></div>
+        <p class="muted">Koneksi OAuth untuk akses folder pribadi. Folder publik tidak perlu login.</p>
+        <div class="field"><label>Client ID</label><input id="driveClientId" placeholder="…apps.googleusercontent.com"></div>
+        <div class="field"><label>Client Secret</label><input id="driveClientSecret" placeholder="GOCSPX-…"></div>
+        <div class="row"><button class="btn" id="btnDriveAuth">🔑 Login Google Drive</button><span class="muted" id="driveAuthHint"></span></div>
+        <div class="field"><label>Kode otorisasi</label><input id="driveCode" placeholder="Paste kode 4/… di sini"></div>
+        <button class="btn" id="btnDriveExchange">🔄 Tukar kode</button>
+        <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+        <div class="card-head"><h3>📂 Folder publik</h3></div>
+        <p class="muted">Test link folder publik (tanpa login). Bisa langsung dipakai untuk kompilasi.</p>
+        <div class="field">
+          <input id="publicFolderLink" placeholder="https://drive.google.com/drive/folders/…">
+          <button class="btn sm" id="btnPublicLoad">🔍 Test</button>
+        </div>
+        <div id="publicFilesList" class="drive-files" style="margin-top:8px"></div>
+      </div>
+    </section>
+
+    <!-- ============ TAB 4 : CHANNEL ============ -->
+    <section id="tab-channel" class="tab-panel">
+      <div class="cols">
+        <div class="card">
+          <div class="card-head"><h2>▶ YouTube</h2><button class="btn sm primary" id="btnAddYT">+ Tambah</button></div>
+          <div id="accYT"></div>
+        </div>
+        <div class="card" id="fbChannelCard">
+          <div class="card-head"><h2>ⓕ Facebook</h2><button class="btn sm primary" id="btnAddFB">+ Tambah</button></div>
+          <div id="accFB"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>👥 Grup Multi Upload</h2><button class="btn sm primary" id="btnAddGroup">+ Grup</button></div>
+        <p class="muted" style="margin-top:0">Satu video diunggah otomatis ke semua akun dalam grup yang dipilih.</p>
+        <div id="groupList"></div>
+      </div>
+      <div class="card tip">💡 <b>Test</b> dulu setelah tambah channel. Gagal? Client ID kepaste 2x, Secret kepotong, atau token masih kode <code>4/...</code> (tukar jadi <code>1//...</code> di form).</div>
+    </section>
+
+
+  </main>
+
+  <!-- ===== KANAN: panel proses kompilasi ===== -->
+  <aside class="side side-right">
+    <div id="compileProgress" class="ai-build-panel" style="display:none">
+      <div class="ai-build-glow"></div>
+      <div class="ai-build-head">
+        <div class="ai-orb"><span></span></div>
+        <div>
+          <b id="compileBuildTitle">Sedang membuat video</b>
+          <div class="muted" id="compileBuildStep">Menyiapkan proses kompilasi…</div>
+        </div>
+        <div class="ai-build-metrics"><strong id="compilePercent">0%</strong><small id="compileEta">Menghitung waktu…</small></div>
+      </div>
+      <div class="ai-build-track"><div class="ai-build-fill" id="compileBar" style="width:0%"></div><i></i></div>
+      <div class="ai-phase-grid">
+        <div class="ai-phase" id="phaseDownload">
+          <div class="ai-phase-head"><span>⬇ Download video</span><b id="dlPercent">0%</b></div>
+          <div class="ai-phase-track"><div class="ai-phase-fill" id="dlBar"></div></div>
+          <small id="dlDetail" class="muted">Menunggu…</small>
+        </div>
+        <div class="ai-phase" id="phaseRender">
+          <div class="ai-phase-head"><span>🎬 Render video</span><b id="renderPercent">0%</b></div>
+          <div class="ai-phase-track"><div class="ai-phase-fill" id="renderBar"></div></div>
+          <small id="renderDetail" class="muted">Menunggu…</small>
+        </div>
+        <div class="ai-phase" id="phaseUpload">
+          <div class="ai-phase-head"><span>📤 Upload YouTube & Facebook</span><b id="uploadPercent">0%</b></div>
+          <div class="ai-phase-track"><div class="ai-phase-fill" id="uploadBar"></div></div>
+          <small id="uploadDetail" class="muted">Menunggu…</small>
+          <div class="ai-upload-grid">
+            <div class="ai-upload" id="uploadYt">
+              <div class="ai-upload-head"><span>▶ YouTube</span><b id="ytPercent">0%</b></div>
+              <div class="ai-phase-track"><div class="ai-phase-fill" id="ytBar"></div></div>
+              <small id="ytDetail" class="muted">Menunggu…</small>
+            </div>
+            <div class="ai-upload" id="uploadFb">
+              <div class="ai-upload-head"><span>ⓕ Facebook</span><b id="fbPercent">0%</b></div>
+              <div class="ai-phase-track"><div class="ai-phase-fill" id="fbBar"></div></div>
+              <small id="fbDetail" class="muted">Menunggu…</small>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="ai-build-steps">
+        <span id="buildStepDownload">● Mengambil video</span>
+        <span id="buildStepArrange">○ Menyusun urutan</span>
+        <span id="buildStepRender">○ Membuat video</span>
+        <span id="buildStepPost">○ Posting YouTube & Facebook</span>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div id="toasts"></div>
+
+<footer class="statusbar" id="statusBar">
+  <span class="sb-item" id="sbCompile">⏸ Siaga</span>
+  <span class="sb-item" id="sbAutoPost"></span>
+  <span class="sb-item" id="sbSchedule">🗓 Memuat jadwal…</span>
+  <span class="sb-item sb-hide-sm" id="sbDownload"></span>
+  <span class="sb-log" id="sbLog"></span>
+</footer>
+
+<!-- Dialog: tambah YouTube -->
+<dialog id="dlgYT">
+  <form id="formYT" method="dialog">
+    <h3 id="dlgYTTitle">Tambah channel YouTube</h3>
+    <div class="steps"><span class="on">1. Isi ID</span> → <span>2. Login</span> → <span>3. Tukar kode</span> → <span>4. Simpan</span></div>
+    <div class="field"><label>Nama channel</label><input name="name" placeholder="cth: channel-utama" required></div>
+    <div class="field"><label>Client ID</label><input name="clientId" id="ytClientId" placeholder="…apps.googleusercontent.com" required></div>
+    <div class="field"><label>Client Secret</label><input name="clientSecret" id="ytClientSecret" placeholder="GOCSPX-…" required></div>
+    <div class="row"><button type="button" class="btn" id="btnAuthUrl">🔑 Buka Login Google</button><span class="muted" id="authHint"></span></div>
+    <div class="field"><label>Kode dari Google</label><input id="ytCode" placeholder="Paste kode 4/… di sini"></div>
+    <button type="button" class="btn" id="btnExchange">🔄 Tukar kode jadi token</button>
+    <div class="field"><label>Refresh Token</label><input name="refreshToken" id="ytRefresh" placeholder="Otomatis terisi (1//…)" required></div>
+    <div class="row"><button type="button" class="btn sm" id="btnTestYT">Test koneksi</button><span class="muted" id="testHint"></span></div>
+    <div class="field"><label>Privasi channel ini</label>
+      <div class="seg" id="ytPrivacyGroup">
+        <label><input type="radio" name="privacyStatus" value="private" checked> 🔒 Private</label>
+        <label><input type="radio" name="privacyStatus" value="unlisted"> 🔗 Unlisted</label>
+        <label><input type="radio" name="privacyStatus" value="public"> 🌍 Public</label>
+      </div>
+    </div>
+    <div class="dlg-actions"><button type="submit" class="btn primary">Simpan</button><button type="button" class="btn" data-close>Batal</button></div>
+    <p class="muted" id="ytMsg"></p>
+  </form>
+</dialog>
+
+<!-- Dialog: edit YouTube -->
+<dialog id="dlgEditYT">
+  <form id="formEditYT" method="dialog">
+    <h3>Edit channel</h3>
+    <input type="hidden" id="editOrigName">
+    <div class="field"><label>Nama</label><input id="editName" required></div>
+    <div class="field"><label>Client ID</label><input id="editClientId"></div>
+    <div class="field"><label>Client Secret</label><input id="editClientSecret"></div>
+    <div class="field"><label>Refresh Token</label><input id="editRefresh"></div>
+    <div class="field"><label>Privasi</label>
+      <div class="seg" id="editPrivacyGroup">
+        <label><input type="radio" name="privacyStatus" value="private"> 🔒 Private</label>
+        <label><input type="radio" name="privacyStatus" value="unlisted"> 🔗 Unlisted</label>
+        <label><input type="radio" name="privacyStatus" value="public"> 🌍 Public</label>
+      </div>
+    </div>
+    <div class="field"><label>Judul default</label><input id="editDefaultTitle" placeholder="Kosong = judul video"></div>
+    <div class="field"><label>Deskripsi default</label><textarea id="editDefaultDescription" rows="2" placeholder="Kosong = deskripsi video"></textarea></div>
+    <div class="field"><label>Tag default (pisahkan dengan koma)</label><input id="editDefaultTags" placeholder="shorts, viral"></div>
+    <label class="check"><input type="checkbox" id="editEnabled"> Aktif</label>
+    <div class="dlg-actions"><button type="submit" class="btn primary">Update</button><button type="button" class="btn" data-close>Batal</button></div>
+    <p class="muted" id="editMsg"></p>
+  </form>
+</dialog>
+
+<!-- Dialog: tambah FB -->
+<dialog id="dlgFB">
+  <form id="formFB" method="dialog">
+    <h3>Tambah Facebook Page</h3>
+    <div class="field"><label>Nama</label><input name="name" placeholder="cth: olshop-jkt" required></div>
+    <div class="field"><label>Page ID</label><input name="pageId" required></div>
+    <div class="field"><label>Page Access Token</label><input name="token" required>
+      <p class="field-help">Buka <a class="ext-link" href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener">Graph API Explorer ↗</a>, pilih Page yang benar, lalu salin Page ID dan Page Access Token.</p>
+    </div>
+    <div class="dlg-actions"><button type="submit" class="btn primary">Simpan</button><button type="button" class="btn" data-close>Batal</button></div>
+  </form>
+</dialog>
+
+<!-- Dialog: edit FB -->
+<dialog id="dlgEditFB">
+  <form id="formEditFB" method="dialog">
+    <h3>Edit Facebook Page</h3>
+    <input type="hidden" id="editFBOrig">
+    <div class="field"><label>Nama</label><input id="editFBName" required></div>
+    <div class="field"><label>Page ID</label><input id="editFBPageId"></div>
+    <div class="field"><label>Token</label><input id="editFBToken" type="password" autocomplete="new-password" placeholder="Kosongkan jika tidak ingin mengubah token">
+      <p class="field-help" id="editFBTokenHelp">Token expired? Ambil Page ID + token baru di <a class="ext-link" href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener">Graph API Explorer ↗</a>, isi kedua kolom di atas, lalu Simpan dan klik Test.</p>
+    </div>
+    <div class="field"><label>Judul default</label><input id="editFBDefaultTitle" placeholder="Kosong = judul video"></div>
+    <div class="field"><label>Deskripsi/caption default</label><textarea id="editFBDefaultDescription" rows="2" placeholder="Kosong = caption video"></textarea></div>
+    <div class="field"><label>Tag default (pisahkan dengan koma)</label><input id="editFBDefaultTags" placeholder="reels, viral"></div>
+    <label class="check"><input type="checkbox" id="editFBEnabled"> Aktif</label>
+    <div class="dlg-actions"><button type="submit" class="btn primary">Update</button><button type="button" class="btn" data-close>Batal</button></div>
+    <p class="muted" id="editFBMsg"></p>
+  </form>
+</dialog>
+
+<!-- Dialog: edit detail video -->
+<dialog id="dlgMeta">
+  <form id="formMeta" method="dialog">
+    <h3 id="metaTitle">Edit video</h3>
+    <div class="field"><label>Judul YouTube (maks 100) <span class="muted" id="mTitleCount"></span></label><input name="title" id="mTitle" maxlength="100"></div>
+    <div class="field"><label>Deskripsi YouTube</label><textarea name="description" id="mDescription" rows="3" maxlength="5000"></textarea></div>
+    <div class="grid2">
+      <div class="field"><label>Tags (koma)</label><input name="tags" id="mTags"><div class="tagchips" id="mTagChips"></div></div>
+      <div class="field"><label>Kategori</label><select name="categoryId" id="mCategory"><option value="">Ikut default</option></select></div>
+    </div>
+    <div class="field"><label>Visibilitas video ini</label>
+      <div class="seg">
+        <label><input type="radio" name="privacyStatus" value="" checked> Ikut akun</label>
+        <label><input type="radio" name="privacyStatus" value="private"> 🔒 Private</label>
+        <label><input type="radio" name="privacyStatus" value="unlisted"> 🔗 Unlisted</label>
+        <label><input type="radio" name="privacyStatus" value="public"> 🌍 Public</label>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Jadwal tayang YT (opsional)</label><input type="datetime-local" name="publishAt" id="mPublishAt"></div>
+      <div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" name="madeForKids" id="mKids" value="true"> Untuk anak-anak</label></div>
+    </div>
+    <div id="mFbWrap">
+      <div class="field"><label>Caption Facebook (kosong = ikut YT)</label><textarea name="fbCaption" id="mFbCaption" rows="2" maxlength="2200"></textarea></div>
+      <div class="field"><label>Mode Facebook video ini</label>
+        <div class="seg">
+          <label><input type="radio" name="fbUseReels" value="default" checked> Ikut default</label>
+          <label><input type="radio" name="fbUseReels" value="true"> Reels</label>
+          <label><input type="radio" name="fbUseReels" value="false"> Video biasa</label>
+        </div>
+      </div>
+    </div>
+    <div class="dlg-actions"><button type="submit" class="btn primary">Simpan</button><button type="button" class="btn" data-close>Batal</button></div>
+  </form>
+</dialog>
+
+<!-- Dialog: tambah/edit grup multi upload -->
+<dialog id="dlgGroup">
+  <form id="formGroup" method="dialog">
+    <div class="dlg-head">
+      <div>
+        <h3 id="dlgGroupTitle">Tambah grup</h3>
+        <p class="dlg-sub">Satu video akan diupload ke semua akun yang dipilih.</p>
+      </div>
+      <button type="button" class="dlg-x" data-close aria-label="Tutup">&times;</button>
+    </div>
+    <div class="dlg-body">
+      <input type="hidden" id="groupOrigId">
+      <div class="field">
+        <label for="groupName">Nama grup</label>
+        <input id="groupName" placeholder="cth: Grup 1" required>
+      </div>
+      <label class="check"><input type="checkbox" id="groupEnabled" checked> Grup aktif (bisa dipakai untuk posting)</label>
+      <div class="field gp-field">
+        <div class="gp-head">
+          <label>Akun dalam grup</label>
+          <span class="gp-count" id="groupCount">0 akun dipilih</span>
+        </div>
+        <div class="gp-tools">
+          <button type="button" class="btn xs" id="groupSelectActive">Pilih semua aktif</button>
+          <button type="button" class="btn xs" id="groupClear">Kosongkan</button>
+        </div>
+        <div id="groupAccounts" class="gp-list"></div>
+        <p class="gp-hint" id="groupAccHint"></p>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <p class="dlg-msg" id="groupMsg"></p>
+      <div class="dlg-actions">
+        <button type="button" class="btn" data-close>Batal</button>
+        <button type="submit" class="btn primary" id="groupSubmit">Simpan</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<!-- Dialog: kelola link folder tersimpan -->
+<dialog id="dlgLinks">
+  <form id="formLinks" method="dialog">
+    <div class="dlg-head">
+      <div>
+        <h3>Link Folder Tersimpan</h3>
+        <p class="dlg-sub">Daftar folder Google Drive untuk kompilasi.</p>
+      </div>
+      <button type="button" class="dlg-x" data-close aria-label="Tutup">&times;</button>
+    </div>
+    <div class="dlg-body">
+      <div class="row" style="gap:6px">
+        <input id="dlgLinkName" placeholder="Nama (cth: Video Lucu)" style="max-width:200px">
+        <input id="dlgLinkUrl" placeholder="https://drive.google.com/drive/folders/..." style="flex:1">
+        <button type="button" class="btn primary" id="btnDlgAddLink">＋ Tambah</button>
+      </div>
+      <div id="dlgLinksList" class="drive-files" style="margin-top:10px"></div>
+    </div>
+    <div class="dlg-foot">
+      <p class="dlg-msg" id="linksMsg"></p>
+      <div class="dlg-actions">
+        <button type="button" class="btn" data-close>Tutup</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<!-- Dialog: jadwal kompilasi -->
+<dialog id="dlgSchedule">
+  <form id="formSchedule" method="dialog">
+    <div class="dlg-head">
+      <div>
+        <h3>Jadwal Kompilasi Otomatis</h3>
+
+      </div>
+      <button type="button" class="dlg-x" data-close aria-label="Tutup">&times;</button>
+    </div>
+    <div class="dlg-body">
+      <div class="field">
+        <label for="schName">Nama jadwal</label>
+        <input id="schName" placeholder="cth: Pagi Lucu" required>
+      </div>
+      <label class="check"><input type="checkbox" id="schDaily" checked> Harian</label>
+      <div class="field" id="wrapSchDaily">
+        <label>Jam posting</label>
+        <div id="schTimeList" class="schedule-time-list">
+          <div class="schedule-time-row">
+            <input type="time" class="sch-time" value="06:00">
+            <button type="button" class="btn xs danger sch-remove-time" title="Hapus jam">×</button>
+          </div>
+        </div>
+        <div class="row" style="margin-top:8px;gap:6px">
+          <button type="button" class="btn xs" id="btnSchAddTime">＋ Tambah jam</button>
+          <button type="button" class="btn xs" id="btnSchPreset">⚡ Pagi/Siang/Sore</button>
+          <button type="button" class="btn xs" id="btnSchClearHours">Kosongkan</button>
+        </div>
+        <small class="muted">Klik kolom jam untuk memilih menggunakan roll waktu.</small>
+      </div>
+      <label class="check"><input type="checkbox" id="schEnabled" checked> Jadwal aktif</label>
+      <div class="field gp-field">
+        <div class="gp-head">
+          <label>Jadwal tersimpan</label>
+          <span class="gp-count" id="schCount">0 jadwal</span>
+        </div>
+        <div id="schList" class="gp-list"></div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <p class="dlg-msg" id="schMsg"></p>
+      <div class="dlg-actions">
+        <button type="button" class="btn" data-close>Tutup</button>
+        <button type="submit" class="btn primary" id="schSubmit">＋ Simpan jadwal</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<!-- Kompat: sinkron state (disembunyikan, bukan tombol) -->
+<div style="display:none" aria-hidden="true">
+  <select id="strategySel"><option value="all">all</option><option value="rotate">rotate</option></select>
+  <select id="platformSel"><option value="all">all</option><option value="youtube">youtube</option><option value="facebook">facebook</option></select>
+  <input id="accountFilter">
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "youtube": [
+    {
+      "name": "akun1",
+      "clientId": "ISI_CLIENT_ID_AKUN1",
+      "clientSecret": "ISI_CLIENT_SECRET_AKUN1",
+      "refreshToken": "ISI_REFRESH_TOKEN_AKUN1",
+      "privacyStatus": "public",
+      "enabled": true
+    }
+  ],
+  "facebook": [
+    {
+      "name": "page1",
+      "pageId": "ISI_PAGE_ID",
+      "token": "ISI_PAGE_ACCESS_TOKEN",
+      "enabled": true
+    }
+  ]
+}

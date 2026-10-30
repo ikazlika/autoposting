@@ -1,0 +1,23 @@
+{
+  "name": "auto-posting-youtube-facebook",
+  "version": "1.0.0",
+  "description": "Auto posting Shorts/Reels dari folder lokal ke YouTube dan Facebook Page",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "post": "node src/post.js --now",
+    "schedule": "node src/scheduler.js",
+    "setup": "node src/setup.js",
+    "ui": "node src/server.js",
+    "auth:youtube": "node src/get-refresh-token.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "form-data": "^4.0.0",
+    "googleapis": "^140.0.0",
+    "multer": "^2.4.0",
+    "node-cron": "^3.0.3"
+  }
+}
