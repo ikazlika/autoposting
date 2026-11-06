@@ -10,6 +10,11 @@ data/compile_schedules.json
 data/drive_links.json
 akun.txt
 server_err.txt
+server_out.txt
+server_err_old.txt
+server_out_old.txt
+watchdog.log
+watchdog_server.log
 videos/*.mp4
 videos/*.mov
 videos/*.webm

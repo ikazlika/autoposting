@@ -119,6 +119,10 @@ function updateAccount(platform, name, patch) {
     if (patch.clientSecret !== undefined) acc.clientSecret = patch.clientSecret;
     if (patch.refreshToken !== undefined) acc.refreshToken = patch.refreshToken;
     if (patch.privacyStatus) acc.privacyStatus = patch.privacyStatus;
+    if (patch.expired !== undefined) {
+      if (patch.expired) acc.expired = true;
+      else delete acc.expired;
+    }
     for (const key of ['defaultTitle', 'defaultDescription', 'defaultTags']) {
       if (patch[key] !== undefined) acc[key] = Array.isArray(patch[key]) ? patch[key] : String(patch[key]);
     }

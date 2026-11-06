@@ -180,10 +180,13 @@ code{background:#191920;border:1px solid var(--line);padding:1px 6px;border-radi
 .hour-grid label:hover{border-color:var(--line3)}
 .hour-grid label:has(input:checked){border-color:var(--accent);background:var(--accent-soft);font-weight:700}
 .hour-grid input{accent-color:var(--accent)}
+/* ===== pemilih jam 24 jam ===== */
 .schedule-time-list{display:flex;flex-direction:column;gap:6px;margin-top:6px}
-.schedule-time-row{display:flex;align-items:center;gap:6px;max-width:210px}
-.schedule-time-row .sch-time{font-size:18px;letter-spacing:1px;text-align:center;min-width:145px}
-.schedule-time-row .sch-remove-time{min-width:30px;padding:5px 8px}
+.schedule-time-row{display:flex;align-items:center;gap:4px;max-width:250px}
+.schedule-time-row .sch-hour,.schedule-time-row .sch-min{flex:1;min-width:0;padding:8px 6px;font-size:15px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums;letter-spacing:.5px;border:1px solid var(--line2);border-radius:9px;background:var(--bg2);color:var(--text)}
+.schedule-time-row .sch-hour:focus,.schedule-time-row .sch-min:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
+.schedule-time-row .sch-sep{font-size:17px;font-weight:700;color:var(--muted);flex-shrink:0}
+.schedule-time-row .sch-remove-time{min-width:32px;padding:6px 9px;flex-shrink:0}
 
 /* ===== log ===== */
 .log{background:#050507;border:1px solid var(--line);border-radius:10px;padding:11px;max-height:220px;overflow:auto;font:11.5px/1.55 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;color:#c4c4cc}
@@ -262,8 +265,12 @@ body{padding-bottom:38px}
 .sb-dot{width:7px;height:7px;border-radius:50%;background:#52525b;display:inline-block;flex-shrink:0}
 .sb-dot.run{background:var(--warn);animation:pulse 1.2s infinite}
 .sb-dot.ok{background:var(--ok)}
-.sb-dot.wait{background:#3b82f6}
+.sb-dot.wait{background:#3b82f6;animation:pulse 2s ease-in-out infinite;box-shadow:0 0 10px rgba(59,130,246,.55)}
 .sb-dot.err{background:var(--danger)}
+.sb-sched{display:inline-flex;flex-direction:column;gap:4px;min-width:0;max-width:430px}
+.sb-sched-text{color:var(--text);font-weight:600}
+.sb-progress{height:3px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden;flex-shrink:0}
+.sb-progress-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,#6366f1,#a855f7);transition:width 1s linear}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media(max-width:760px){.sb-hide-sm{display:none!important}}
 

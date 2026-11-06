@@ -28,6 +28,9 @@ let lastVideos = [];
 let lastAccounts = { youtube: [], facebook: [] };
 let lastGroups = [];
 const esc = s => String(s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+// Prefix subpath saat app dipasang di bawah path lain (mis. /youtube-studio/auto-posting).
+// fetch('/api/...') sudah otomatis diberi prefix oleh shim di index.html.
+const AP_BASE = window.__AP_BASE__ || '';
 const FB_EXPLORER_URL = 'https://developers.facebook.com/tools/explorer/';
 const fbTokenLink = text => `<a class="ext-link" href="${FB_EXPLORER_URL}" target="_blank" rel="noopener">${text} ↗</a>`;
 
@@ -158,10 +161,10 @@ async function refresh() {
 
     const pvBadge = p => p === 'public' ? '🌍 Public' : p === 'unlisted' ? '🔗 Unlisted' : '🔒 Private';
     $('#accYT').innerHTML = acc.youtube.length ? acc.youtube.map(a => `
-      <div class="item"><div class="meta"><b>▶ ${esc(a.name)}</b><span>${a.enabled === false ? 'Nonaktif' : 'Aktif'} • ${pvBadge(a.privacyStatus)}</span></div>
-      <span class="badge ${a.enabled === false ? 'off' : 'on'}">${a.enabled === false ? 'OFF' : 'ON'}</span>
+      <div class="item"><div class="meta"><b>▶ ${esc(a.name)}</b><span>${a.expired ? '⚠ Token expired' : a.enabled === false ? 'Nonaktif' : 'Aktif'} • ${pvBadge(a.privacyStatus)}</span></div>
+      <span class="badge ${a.expired || a.enabled === false ? 'off' : 'on'}">${a.expired ? 'EXPIRED' : a.enabled === false ? 'OFF' : 'ON'}</span>
       <div class="acts">
-        <button class="btn sm" onclick="editYT('${esc(a.name)}')">Edit</button>
+        <button class="btn sm${a.expired ? ' primary' : ''}" onclick="editYT('${esc(a.name)}')">${a.expired ? 'Perbarui' : 'Edit'}</button>
         <button class="btn sm" onclick="testYT('${esc(a.name)}')">Test</button>
         <button class="btn sm" onclick="toggleAcc('youtube','${esc(a.name)}',${a.enabled === false})">${a.enabled === false ? 'On' : 'Off'}</button>
         <button class="btn sm danger" onclick="delAcc('youtube','${esc(a.name)}')">Hapus</button>
@@ -333,13 +336,13 @@ function renderPreview() {
   $('#previewBody').style.display = empty ? 'none' : '';
   if (!v) return;
   const vid = $('#previewVideo');
-  const src = '/api/video-file?file=' + encodeURIComponent(v.file);
+  const src = AP_BASE + '/api/video-file?file=' + encodeURIComponent(v.file);
   if (vid.dataset.f !== v.file) { vid.dataset.f = v.file; vid.src = src; vid.load(); }
   $('#previewInfo').textContent = `${v.file} • ${v.sizeMB} MB`;
   const img = $('#previewThumb');
   img.onerror = () => { img.style.display = 'none'; $('#previewNoThumb').style.display = ''; };
   img.onload = () => { img.style.display = ''; $('#previewNoThumb').style.display = 'none'; };
-  img.src = '/api/thumb?file=' + encodeURIComponent(v.file) + '&t=' + Date.now();
+  img.src = AP_BASE + '/api/thumb?file=' + encodeURIComponent(v.file) + '&t=' + Date.now();
   const tags = (v.tags || []).join(', ');
   $('#previewMeta').textContent = [v.title, tags ? 'Tags: ' + tags : '', v.hasThumb ? '📷 thumbnail terpasang' : ''].filter(Boolean).join(' • ');
   // input thumbnail sembunyi bila video ini sudah ada thumbnail
@@ -439,8 +442,7 @@ dz.ondrop = async e => { e.preventDefault(); dz.classList.remove('dragover'); co
 $('#fileInput').onchange = async e => { const f = e.target.files[0]; if (f) try { await uploadFileToQueue(f); } catch (err) { toast(err.message, 'err'); } e.target.value = ''; };
 
 // ---------- channel CRUD ----------
-window.delAcc = async (platform, name) => {
-  if (!confirm(`Hapus ${platform}/${name}?`)) return;
+window.delAcc = async (platform, name) => {  if (!confirm(`Hapus ${platform}/${name}?`)) return;
   await api('/api/accounts/' + platform + '/' + encodeURIComponent(name), { method: 'DELETE' });
   toast('Dihapus', 'ok'); refresh();
 };
@@ -448,6 +450,62 @@ window.toggleAcc = async (platform, name, enabled) => {
   await api('/api/accounts/' + platform + '/' + encodeURIComponent(name) + '/toggle', { method: 'POST', body: JSON.stringify({ enabled }) });
   refresh();
 };
+
+// ---------- periksa & perbarui token ----------
+async function loadTokenStatus() {
+  const box = $('#tokenStatus');
+  if (!box) return;
+  try {
+    const [acc, fbSt] = await Promise.all([
+      api('/api/accounts'),
+      api('/api/facebook/token-status').catch(() => ({ status: [] })),
+    ]);
+    const fbMap = new Map((fbSt.status || []).map(s => [s.name, s]));
+    const rows = [];
+    (acc.youtube || []).forEach(a => rows.push({
+      icon: '▶', name: a.name, platform: 'YouTube',
+      ok: !a.expired && a.enabled !== false,
+      state: a.expired ? 'Token expired — perlu diperbarui' : a.enabled === false ? 'Nonaktif' : 'Token valid',
+    }));
+    (acc.facebook || []).forEach(a => {
+      const s = fbMap.get(a.name);
+      const days = s && s.daysLeft !== null ? s.daysLeft : null;
+      rows.push({
+        icon: 'ⓕ', name: a.name, platform: 'Facebook',
+        ok: !a.expired && a.enabled !== false,
+        state: a.expired ? 'Token expired — perlu diperbarui'
+          : days !== null && days < 7 ? `Sisa ${days} hari — akan diperpanjang otomatis`
+          : a.enabled === false ? 'Nonaktif' : 'Token valid',
+      });
+    });
+    box.innerHTML = rows.length ? rows.map(r => `
+      <div class="item"><div class="meta"><b>${r.icon} ${esc(r.name)}</b><span>${esc(r.platform)} • ${esc(r.state)}</span></div>
+      <span class="badge ${r.ok ? 'on' : 'off'}">${r.ok ? 'OK' : 'PERLU TINDAKAN'}</span></div>`).join('')
+      : '<div class="empty">Belum ada akun.</div>';
+  } catch (e) {
+    box.innerHTML = '<div class="empty">⚠ ' + esc(e.message) + '</div>';
+  }
+}
+$('#btnRefreshTokens')?.addEventListener('click', async () => {
+  const btn = $('#btnRefreshTokens');
+  btn.disabled = true; btn.textContent = 'Memeriksa…';
+  try {
+    const r = await api('/api/accounts/refresh-all', { method: 'POST', body: JSON.stringify({}) });
+    const yt = r.youtube || [];
+    const ytOk = yt.filter(x => x.ok).length;
+    const fbOk = (r.facebook && r.facebook.sukses) || [];
+    const ytBad = yt.filter(x => !x.ok);
+    if (ytBad.length) {
+      toast(`⚠ ${ytBad.length} channel YouTube token expired — klik "Perbarui" untuk perbaiki`, 'err');
+    } else {
+      toast(`✅ Semua token OK (YouTube ${ytOk}/${yt.length}${fbOk.length ? `, FB diperpanjang: ${fbOk.join(', ')}` : ''})`, 'ok');
+    }
+    loadTokenStatus();
+    refresh();
+  } catch (e) { toast('Gagal: ' + e.message, 'err'); }
+  finally { btn.disabled = false; btn.textContent = 'Periksa & perbarui'; }
+});
+loadTokenStatus();
 
 // ---------- grup multi upload ----------
 function groupAccountStatus(a) {
@@ -581,7 +639,12 @@ window.editYT = async name => {
   $('#editDefaultTags').value = Array.isArray(a.defaultTags) ? a.defaultTags.join(', ') : (a.defaultTags || '');
   $$( '#editPrivacyGroup input[name="privacyStatus"]').forEach(r => r.checked = r.value === (a.privacyStatus || 'private'));
   $('#editEnabled').checked = a.enabled !== false;
-  $('#editMsg').textContent = ''; $('#dlgEditYT').showModal();
+  $('#editMsg').textContent = ''; $('#editAuthHint').textContent = ''; $('#editTestHint').textContent = ''; $('#editYtCode').value = '';
+  if (a.expired) {
+    $('#editAuthHint').textContent = '⚠ Token akun ini sudah expired. Klik "🔑 Login Google ulang" untuk perbarui.';
+    $('#editTestHint').textContent = '⚠ Token expired — perlu diperbarui.';
+  }
+  $('#dlgEditYT').showModal();
 };
 window.editFB = async name => {
   const accs = await api('/api/accounts');
@@ -687,6 +750,40 @@ $('#formEditYT').onsubmit = async e => {
   const patch = { name: $('#editName').value.trim(), clientId: $('#editClientId').value.trim(), clientSecret: $('#editClientSecret').value.trim(), refreshToken: $('#editRefresh').value.trim(), privacyStatus: pv, enabled: $('#editEnabled').checked, defaultTitle: $('#editDefaultTitle').value.trim(), defaultDescription: $('#editDefaultDescription').value, defaultTags: $('#editDefaultTags').value.split(',').map(s => s.trim()).filter(Boolean) };
   try { await api('/api/accounts/youtube/' + encodeURIComponent(orig), { method: 'PUT', body: JSON.stringify(patch) }); $('#dlgEditYT').close(); toast('Channel diupdate ✅', 'ok'); refresh(); }
   catch (err) { $('#editMsg').textContent = err.message; }
+};
+
+// --- Perbarui token akun expired langsung dari dialog Edit channel ---
+$('#btnEditAuthUrl').onclick = async () => {
+  const clientId = $('#editClientId').value.trim(), clientSecret = $('#editClientSecret').value.trim();
+  if (!clientId || !clientSecret) { $('#editAuthHint').textContent = 'Isi Client ID & Secret dulu.'; return toast('Isi Client ID & Secret dulu', 'err'); }
+  $('#editAuthHint').textContent = 'Membuka Google…';
+  try {
+    const r = await api('/api/youtube/auth-url', { method: 'POST', body: JSON.stringify({ clientId, clientSecret }) });
+    window.open(r.authUrl, '_blank');
+    $('#editAuthHint').textContent = 'Login di tab baru → Allow → copy Kode → paste di bawah → Tukar kode.';
+  } catch (e) { $('#editAuthHint').textContent = 'Gagal: ' + e.message; }
+};
+$('#btnEditExchange').onclick = async () => {
+  const clientId = $('#editClientId').value.trim(), clientSecret = $('#editClientSecret').value.trim(), code = $('#editYtCode').value.trim();
+  if (!code) return toast('Paste kode Google dulu', 'err');
+  $('#editTestHint').textContent = 'Menukar kode…';
+  try {
+    const r = await api('/api/youtube/exchange', { method: 'POST', body: JSON.stringify({ clientId, clientSecret, code }) });
+    $('#editRefresh').value = r.refreshToken;
+    $('#editYtCode').value = '';
+    $('#editTestHint').textContent = '✅ Token baru terisi — klik Update untuk simpan.';
+    toast('Token baru didapat ✅', 'ok');
+  } catch (e) { $('#editTestHint').textContent = '❌ ' + e.message; toast(e.message, 'err'); }
+};
+$('#btnEditTestYT').onclick = async () => {
+  const clientId = $('#editClientId').value.trim(), clientSecret = $('#editClientSecret').value.trim(), refreshToken = $('#editRefresh').value.trim();
+  if (!clientId || !clientSecret || !refreshToken) return toast('Lengkapi Client ID, Secret & Refresh Token dulu', 'err');
+  $('#editTestHint').textContent = 'Testing…';
+  try {
+    await api('/api/youtube/test', { method: 'POST', body: JSON.stringify({ clientId, clientSecret, refreshToken }) });
+    $('#editTestHint').textContent = '✅ Token valid';
+    toast('Token valid ✅', 'ok');
+  } catch (e) { $('#editTestHint').textContent = '❌ ' + e.message; toast('Token tidak valid: ' + e.message, 'err'); }
 };
 $('#formFB').onsubmit = async e => {
   e.preventDefault();
@@ -1130,21 +1227,57 @@ function renderSourceProgress(p) {
 }
 
 // ---------- Jadwal kompilasi ----------
+let editingScheduleId = null;
+
+function fillTimeOptions(sel, selected, step) {
+  sel.innerHTML = '';
+  for (let v = 0; v < 60; v += step) {
+    const val = String(v).padStart(2, '0');
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = val;
+    if (val === selected) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  // kalau nilai tersimpan tidak ada di daftar (mis. menit ganjil), tambahkan agar tidak berubah diam-diam
+  if (selected && !Array.from(sel.options).some(o => o.value === selected)) {
+    const opt = document.createElement('option');
+    opt.value = selected;
+    opt.textContent = selected;
+    sel.appendChild(opt);
+    sel.value = selected;
+  }
+}
+
 function addScheduleTime(value = '06:00') {
   const list = $('#schTimeList');
   if (!list) return;
+  const [hh = '06', mm = '00'] = String(value).split(':');
   const row = document.createElement('div');
   row.className = 'schedule-time-row';
-  row.innerHTML = `<input type="time" class="sch-time" value="${value}"><button type="button" class="btn xs danger sch-remove-time" title="Hapus jam">×</button>`;
-  row.querySelector('.sch-remove-time').onclick = () => {
-    if ($('#schTimeList .schedule-time-row').length > 1) row.remove();
-    else row.querySelector('.sch-time').value = '';
+  const hourSel = document.createElement('select');
+  hourSel.className = 'sch-hour';
+  fillTimeOptions(hourSel, hh.padStart(2, '0'), 1);
+  const minSel = document.createElement('select');
+  minSel.className = 'sch-min';
+  // menit 00–59, langkah 1 menit (sebelumnya 5 menit → terasa melompat jauh)
+  fillTimeOptions(minSel, mm.padStart(2, '0'), 1);
+  const sep = document.createElement('span');
+  sep.className = 'sch-sep'; sep.textContent = ':';
+  const del = document.createElement('button');
+  del.type = 'button'; del.className = 'btn xs danger sch-remove-time'; del.title = 'Hapus jam'; del.textContent = '×';
+  del.onclick = () => {
+    if (list.querySelectorAll('.schedule-time-row').length > 1) row.remove();
+    else { hourSel.value = '06'; minSel.value = '00'; }
   };
+  row.append(hourSel, sep, minSel, del);
   list.appendChild(row);
 }
 
 function getScheduleTimes() {
-  return $$('#schTimeList .sch-time').map(input => input.value).filter(Boolean);
+  return $$('#schTimeList .schedule-time-row')
+    .map(r => `${r.querySelector('.sch-hour').value}:${r.querySelector('.sch-min').value}`)
+    .filter(Boolean);
 }
 
 function setScheduleTimes(values) {
@@ -1152,6 +1285,42 @@ function setScheduleTimes(values) {
   if (!list) return;
   list.innerHTML = '';
   (values.length ? values : ['06:00']).forEach(v => addScheduleTime(v));
+}
+
+/** Muat 1 jadwal ke form untuk diedit. */
+async function editSchedule(id) {
+  try {
+    const r = await api('/api/schedules');
+    const s = (r.schedules || []).find(x => x.id === id);
+    if (!s) return toast('Jadwal tidak ditemukan', 'err');
+    editingScheduleId = s.id;
+    $('#schName').value = s.name || '';
+    $('#schEnabled').checked = s.enabled !== false;
+    const isDaily = s.type !== 'interval' && s.type !== 'once';
+    $('#schDaily').checked = isDaily;
+    $('#wrapSchDaily').style.display = isDaily ? '' : 'none';
+    const times = (s.times && s.times.length)
+      ? s.times
+      : (Array.isArray(s.hours) ? s.hours.map(h => `${String(h).padStart(2, '0')}:00`) : ['06:00']);
+    setScheduleTimes(times);
+    $('#schSubmit').textContent = '💾 Simpan perubahan';
+    $('#btnSchCancelEdit').style.display = '';
+    $('#schMsg').textContent = `Mengedit jadwal "${s.name}" — ubah lalu klik Simpan perubahan.`;
+    $('#schName').focus();
+    $('#dlgSchedule')?.showModal();
+  } catch (e) { toast('Gagal muat jadwal: ' + e.message, 'err'); }
+}
+
+function resetScheduleForm() {
+  editingScheduleId = null;
+  $('#schName').value = '';
+  $('#schEnabled').checked = true;
+  $('#schDaily').checked = true;
+  $('#wrapSchDaily').style.display = '';
+  setScheduleTimes(['06:00']);
+  $('#schSubmit').textContent = '＋ Simpan jadwal';
+  $('#btnSchCancelEdit').style.display = 'none';
+  $('#schMsg').textContent = '';
 }
 
 async function loadSchedules() {
@@ -1177,6 +1346,7 @@ async function loadSchedules() {
         <div class="gp-meta"><b>${esc(s.name)}</b><small>${freq} • terakhir: ${last}</small></div>
         <div style="display:flex;gap:4px">
           <button type="button" class="btn xs" data-run="${esc(s.id)}">▶ Jalankan</button>
+          <button type="button" class="btn xs" data-edit="${esc(s.id)}">✏ Edit</button>
           <button type="button" class="btn xs danger" data-delsch="${esc(s.id)}">🗑</button>
         </div>
       </div>`;
@@ -1185,9 +1355,11 @@ async function loadSchedules() {
       try {
         await api('/api/schedules/' + encodeURIComponent(b.dataset.run) + '/run', { method: 'POST' });
         toast('Jadwal dijalankan sekarang', 'ok');
-        $('#dlgSchedule').close();
+        const dlg = $('#dlgSchedule');
+        if (dlg?.open) dlg.close();
       } catch (e) { toast('Gagal: ' + e.message, 'err'); }
     });
+    $$('#schList [data-edit]').forEach(b => b.onclick = () => editSchedule(b.dataset.edit));
     $$('#schList [data-delsch]').forEach(b => b.onclick = async () => {
       try {
         await api('/api/schedules/' + encodeURIComponent(b.dataset.delsch), { method: 'DELETE' });
@@ -1205,33 +1377,38 @@ async function loadSchedules() {
   } catch (e) { toast('Gagal load jadwal: ' + e.message, 'err'); }
 }
 
-$('#btnSchedule')?.addEventListener('click', () => {
-  setScheduleTimes(['06:00']);
+function openScheduleDialog() {
+  resetScheduleForm();
   loadSchedules();
   $('#dlgSchedule').showModal();
-});
+}
+$('#btnSchedule')?.addEventListener('click', openScheduleDialog);
+$('#btnAddSchedule')?.addEventListener('click', openScheduleDialog);
+$('#btnRefreshSchedules')?.addEventListener('click', loadSchedules);
+$('#btnSchCancelEdit')?.addEventListener('click', resetScheduleForm);
 $('#schDaily')?.addEventListener('change', () => {
   $('#wrapSchDaily').style.display = $('#schDaily').checked ? '' : 'none';
 });
 $('#btnSchAddTime')?.addEventListener('click', () => addScheduleTime('12:00'));
-$('#btnSchPreset')?.addEventListener('click', () => setScheduleTimes(['06:00', '12:00', '17:00']));
-$('#btnSchClearHours')?.addEventListener('click', () => setScheduleTimes([]));
+$('#btnSchPreset')?.addEventListener('click', () => setScheduleTimes(['06:00', '12:00', '18:00']));
+$('#btnSchClearHours')?.addEventListener('click', () => setScheduleTimes(['06:00']));
 $('#formSchedule')?.addEventListener('submit', async e => {
   e.preventDefault();
   const link = $('#compileFolderLink')?.value || '';
-  if (!link.trim()) { $('#schMsg').textContent = 'Pilih folder Google Drive di form Kompilasi dulu.'; return; }
   const isDaily = $('#schDaily')?.checked !== false;
   const type = isDaily ? 'daily' : 'interval';
-  const times = getScheduleTimes();
+  const times = isDaily ? getScheduleTimes() : [];
   const hours = times.map(t => Number(t.split(':')[0])).filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => a - b);
-  if (!times.length) { $('#schMsg').textContent = 'Pilih minimal satu jam.'; return; }
+  if (isDaily && !times.length) { $('#schMsg').textContent = 'Pilih minimal satu jam.'; return; }
   const srcNow = currentSource();
   if (srcNow !== 'local' && !link.trim()) { $('#schMsg').textContent = 'Pilih folder Google Drive di form Kompilasi dulu (atau pilih sumber "Video lokal").'; return; }
+  const name = $('#schName').value.trim();
+  if (!name) { $('#schMsg').textContent = 'Isi nama jadwal dulu.'; return; }
   const options = getCompileOptions(false);
   options.postDelaySec = 120;
   options.postTarget = currentTarget();
   const payload = {
-    name: $('#schName').value,
+    name,
     type,
     hours,
     times,
@@ -1240,10 +1417,16 @@ $('#formSchedule')?.addEventListener('submit', async e => {
     options,
   };
   try {
-    await api('/api/schedules', { method: 'POST', body: JSON.stringify(payload) });
-    $('#schName').value = '';
+    if (editingScheduleId) {
+      await api('/api/schedules/' + encodeURIComponent(editingScheduleId), { method: 'PUT', body: JSON.stringify(payload) });
+      toast('Jadwal diperbarui ✅', 'ok');
+      resetScheduleForm();
+    } else {
+      await api('/api/schedules', { method: 'POST', body: JSON.stringify(payload) });
+      $('#schName').value = '';
+      toast('Jadwal tersimpan ✅', 'ok');
+    }
     $('#schMsg').textContent = '';
-    toast('Jadwal tersimpan', 'ok');
     loadSchedules();
   } catch (e) { $('#schMsg').textContent = e.message; }
 });
@@ -1308,6 +1491,7 @@ function getCompileOptions(draft) {
       color: colorInt,
       opacity: Number($('#wmOpacity')?.value) || 0.7,
     } : null,
+    exclude: (String($('#compileExclude')?.value || '').split(',').map(s => s.trim()).filter(Boolean)),
   };
 }
 
@@ -1496,7 +1680,7 @@ async function loadOutputs() {
 }
 
 function playOutput(file) {
-  const url = '/api/output/' + encodeURIComponent(file);
+  const url = AP_BASE + '/api/output/' + encodeURIComponent(file);
   const w = window.open('', '_blank', 'width=420,height=760');
   if (w) {
     w.document.write(`<!DOCTYPE html><html><body style="margin:0;background:#000"><video src="${url}" controls autoplay style="width:100vw;height:100vh;object-fit:contain"></video></body></html>`);
@@ -1780,8 +1964,13 @@ async function updateStatusBar() {
         .filter(s => s.nextRunAt)
         .sort((a, b) => new Date(a.nextRunAt) - new Date(b.nextRunAt))[0];
       if (next) {
-        const ms = new Date(next.nextRunAt).getTime() - Date.now();
-        elS.innerHTML = `<span class="sb-dot wait"></span> 🗓 <b>${esc(next.name)}</b> ${fmtClock(next.nextRunAt)} • <b>${fmtDur(ms)}</b> lagi`;
+        const ms = Math.max(0, new Date(next.nextRunAt).getTime() - Date.now());
+        const endMs = new Date(next.nextRunAt).getTime();
+        const startMs = next.lastRun ? new Date(next.lastRun).getTime() : new Date(next.createdAt || Date.now()).getTime();
+        const span = Math.max(1, endMs - startMs);
+        const frac = Math.min(1, Math.max(0, (Date.now() - startMs) / span));
+        const pct = Math.round(frac * 100);
+        elS.innerHTML = `<span class="sb-dot wait"></span><div class="sb-sched"><span class="sb-sched-text">🗓 <b>${esc(next.name)}</b> ${fmtClock(next.nextRunAt)} • <b>${fmtDur(ms)}</b> lagi</span><div class="sb-progress"><div class="sb-progress-fill" style="width:${pct}%"></div></div></div>`;
       } else {
         elS.innerHTML = `<span class="sb-dot"></span> 🗓 ${list.length} jadwal aktif`;
       }
@@ -1803,6 +1992,8 @@ refresh();
 setInterval(refresh, 10000);
 loadOutputs();
 setInterval(loadOutputs, 15000);
+loadSchedules();
+setInterval(loadSchedules, 30000);
 loadSavedLinks();
 applySourceUI();
 loadDriveFolderFiles();

@@ -75,6 +75,29 @@ function saveUploadedVideo(buffer, originalName) {
   return { file: path.basename(dest), sizeMB: (fs.statSync(dest).size / 1024 / 1024).toFixed(2) };
 }
 
+/** Salin file upload via stream (hemat RAM untuk file besar). */
+function saveUploadedVideoStream(srcPath, originalName) {
+  if (!VIDEO_EXT.test(originalName || '')) throw new Error('Bukan file video: ' + originalName);
+  fs.mkdirSync(config.videosDir, { recursive: true });
+  let dest = path.join(config.videosDir, path.basename(originalName));
+  let i = 1;
+  while (fs.existsSync(dest)) {
+    dest = path.join(config.videosDir, `${path.parse(originalName).name}_${i}${path.extname(originalName)}`);
+    i++;
+  }
+  return new Promise((resolve, reject) => {
+    const rs = fs.createReadStream(srcPath);
+    const ws = fs.createWriteStream(dest);
+    rs.on('error', reject);
+    ws.on('error', reject);
+    ws.on('finish', () => {
+      const sizeMB = (fs.statSync(dest).size / 1024 / 1024).toFixed(2);
+      resolve({ file: path.basename(dest), sizeMB });
+    });
+    rs.pipe(ws);
+  });
+}
+
 /** Parse URL YouTube (watch, youtu.be, shorts) -> valid? */
 function parseYouTube(url) {
   const s = String(url || '').trim();
@@ -167,6 +190,7 @@ module.exports = {
   listLocalVideos,
   addLocalVideo,
   saveUploadedVideo,
+  saveUploadedVideoStream,
   parseYouTube,
   downloadYouTube,
   downloadAllFromFolder,

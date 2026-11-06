@@ -153,6 +153,9 @@
             <div class="field"><label>Filter judul <span class="muted">(opsional — hanya video dengan kata ini ikut)</span></label>
               <input id="compileFilter" placeholder="cth: TRY NOT TO LAUGH">
             </div>
+            <div class="field"><label>Tidak pakai video <span class="muted">(opsional — nama file/kata, dipisah koma, di-skip saat kompilasi)</span></label>
+              <input id="compileExclude" placeholder="cth: funny1.mp4, promo, bloop">
+            </div>
             <div class="grid2">
               <div class="field"><label>Judul kompilasi</label><input id="compileTitle" value="TOP VIDEO LUCU" maxlength="60"></div>
               <div class="field"><label>Subjudul</label><input id="compileSubtitle" value="KOMPILASI PILIHAN" maxlength="60"></div>
@@ -201,6 +204,18 @@
       </div>
 
       <div class="card">
+        <div class="card-head">
+          <h2>🗓 Jadwal tersimpan</h2>
+          <div class="row" style="gap:6px;align-items:center;margin:0">
+            <span class="gp-count" id="schCount">0 jadwal</span>
+            <button class="btn sm" id="btnRefreshSchedules" title="Muat ulang jadwal">↻</button>
+            <button class="btn sm primary" id="btnAddSchedule" title="Buat jadwal kompilasi baru">＋ Jadwal</button>
+          </div>
+        </div>
+        <div id="schList" class="gp-list"></div>
+      </div>
+
+      <div class="card">
         <div class="card-head"><h2>📁 Output Kompilasi</h2><button class="btn sm" id="btnRefreshOutputs">↻</button></div>
         <div id="outputList" class="drive-files"></div>
       </div>
@@ -244,7 +259,12 @@
         <p class="muted" style="margin-top:0">Satu video diunggah otomatis ke semua akun dalam grup yang dipilih.</p>
         <div id="groupList"></div>
       </div>
-      <div class="card tip">💡 <b>Test</b> dulu setelah tambah channel. Gagal? Client ID kepaste 2x, Secret kepotong, atau token masih kode <code>4/...</code> (tukar jadi <code>1//...</code> di form).</div>
+      <div class="card">
+        <div class="card-head"><h2>🔄 Perbarui Token</h2><button class="btn sm primary" id="btnRefreshTokens">Periksa & perbarui</button></div>
+        <p class="muted" style="margin-top:0">Token Facebook diperpanjang otomatis tiap 6 jam. Token YouTube dicek — yang mati ditandai <b>expired</b> agar bisa diperbarui lewat tombol <b>Edit</b>.</p>
+        <div id="tokenStatus" class="list"></div>
+      </div>
+      <div class="card tip">💡 <b>Token YouTube cepat expired?</b> Penyebab utama: OAuth Client di Google Cloud masih berstatus <b>Testing</b> — refresh token hanya hidup <b>7 hari</b>. Buka <a class="ext-link" href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener">OAuth consent screen ↗</a> → klik <b>PUBLISH APP</b> (status jadi <i>In production</i>). Setelah itu refresh token <b>tidak akan expired lagi</b>. Lalu auth ulang channel yang expired.</div>
     </section>
 
 
@@ -345,6 +365,14 @@
     <div class="field"><label>Nama</label><input id="editName" required></div>
     <div class="field"><label>Client ID</label><input id="editClientId"></div>
     <div class="field"><label>Client Secret</label><input id="editClientSecret"></div>
+    <div class="steps" id="editSteps"><span class="on">1. Cek ID</span> → <span>2. Login Google</span> → <span>3. Tukar kode</span> → <span>4. Simpan</span></div>
+    <div class="row" style="flex-wrap:wrap">
+      <button type="button" class="btn" id="btnEditAuthUrl">🔑 Login Google ulang</button>
+      <button type="button" class="btn sm" id="btnEditTestYT">Test koneksi</button>
+      <span class="muted" id="editAuthHint"></span>
+    </div>
+    <div class="field"><label>Kode dari Google <span class="muted">(tempel di sini setelah Allow)</span></label><input id="editYtCode" placeholder="Paste kode 4/… di sini"></div>
+    <div class="row"><button type="button" class="btn" id="btnEditExchange">🔄 Tukar kode jadi token baru</button><span class="muted" id="editTestHint"></span></div>
     <div class="field"><label>Refresh Token</label><input id="editRefresh"></div>
     <div class="field"><label>Privasi</label>
       <div class="seg" id="editPrivacyGroup">
@@ -514,10 +542,10 @@
       </div>
       <label class="check"><input type="checkbox" id="schDaily" checked> Harian</label>
       <div class="field" id="wrapSchDaily">
-        <label>Jam posting</label>
+        <label>Jam posting <span class="muted">(format 24 jam)</span></label>
         <div id="schTimeList" class="schedule-time-list">
           <div class="schedule-time-row">
-            <input type="time" class="sch-time" value="06:00">
+            <select class="sch-hour"></select><span class="sch-sep">:</span><select class="sch-min"></select>
             <button type="button" class="btn xs danger sch-remove-time" title="Hapus jam">×</button>
           </div>
         </div>
@@ -526,20 +554,15 @@
           <button type="button" class="btn xs" id="btnSchPreset">⚡ Pagi/Siang/Sore</button>
           <button type="button" class="btn xs" id="btnSchClearHours">Kosongkan</button>
         </div>
-        <small class="muted">Klik kolom jam untuk memilih menggunakan roll waktu.</small>
+        <small class="muted">Pilih jam (00–23) dan menit. Semua jam memakai format 24 jam, cth: 06:00 = pagi, 18:30 = sore.</small>
       </div>
       <label class="check"><input type="checkbox" id="schEnabled" checked> Jadwal aktif</label>
-      <div class="field gp-field">
-        <div class="gp-head">
-          <label>Jadwal tersimpan</label>
-          <span class="gp-count" id="schCount">0 jadwal</span>
-        </div>
-        <div id="schList" class="gp-list"></div>
-      </div>
+      <small class="muted">Daftar jadwal tersimpan bisa dilihat di tab <b>Kompilasi</b>, tepat di atas 📁 Output Kompilasi.</small>
     </div>
     <div class="dlg-foot">
       <p class="dlg-msg" id="schMsg"></p>
       <div class="dlg-actions">
+        <button type="button" class="btn" id="btnSchCancelEdit" style="display:none">Batal edit</button>
         <button type="button" class="btn" data-close>Tutup</button>
         <button type="submit" class="btn primary" id="schSubmit">＋ Simpan jadwal</button>
       </div>
@@ -554,6 +577,23 @@
   <input id="accountFilter">
 </div>
 
+<script>
+  // Dukungan subpath — mis. dipasang di /youtube-studio/auto-posting/.
+  // Semua fetch('/api/...') otomatis diberi prefix; pemanggilan di app.js tidak perlu diubah.
+  (function () {
+    var m = (location.pathname || '').match(/^(.*\/auto-posting)(?:\/|$)/);
+    var base = m ? m[1] : '';
+    window.__AP_BASE__ = base;
+    if (!base) return;
+    var origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (typeof input === 'string' && input.charAt(0) === '/' && input.indexOf(base + '/') !== 0) {
+        input = base + input;
+      }
+      return origFetch(input, init);
+    };
+  })();
+</script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -4,10 +4,36 @@ const os = require('os');
 const path = require('path');
 const config = require('./config');
 
-const DEFAULT_FFMPEG = 'D:/PROGRAM LAPTOP/projek node/snip yt/bin/ffmpeg.exe';
-const DEFAULT_FFPROBE = 'D:/PROGRAM LAPTOP/projek node/snip yt/bin/ffprobe.exe';
-const DEFAULT_FONT_BOLD = 'C:/Windows/Fonts/arialbd.ttf';
-const DEFAULT_FONT_REG = 'C:/Windows/Fonts/arial.ttf';
+const IS_WIN = process.platform === 'win32';
+const DEFAULT_FFMPEG = process.env.FFMPEG_PATH || (IS_WIN ? 'D:/PROGRAM LAPTOP/projek node/snip yt/bin/ffmpeg.exe' : 'ffmpeg');
+const DEFAULT_FFPROBE = process.env.FFPROBE_PATH || (IS_WIN ? 'D:/PROGRAM LAPTOP/projek node/snip yt/bin/ffprobe.exe' : 'ffprobe');
+const DEFAULT_FONT_BOLD = process.env.FONT_BOLD || (IS_WIN ? 'C:/Windows/Fonts/arialbd.ttf' : '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf');
+const DEFAULT_FONT_REG = process.env.FONT_REG || (IS_WIN ? 'C:/Windows/Fonts/arial.ttf' : '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf');
+
+// Batas thread ffmpeg. Di container/sandbox, ffmpeg bisa gagal ("Resource temporarily
+// unavailable") kalau membuat terlalu banyak thread. Default 1, bisa diatur via env.
+const FFMPEG_THREADS = Math.max(1, Number(process.env.FFMPEG_THREADS) || 1);
+
+// Cari binary di PATH (biar 'ffmpeg' tetap ketemu di Linux), atau path absolut apa adanya.
+function resolveBin(cmd) {
+  const s = String(cmd || '').trim();
+  if (!s) return null;
+  if (s.includes('/') || s.includes('\\')) return fs.existsSync(s) ? s : null;
+  const exts = IS_WIN ? String(process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';') : [''];
+  for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
+    for (const ext of exts) {
+      const cand = path.join(dir, s + ext);
+      try { if (fs.existsSync(cand)) return cand; } catch {}
+    }
+  }
+  return null;
+}
+
+function resolveFont(p, fallback) {
+  if (p && fs.existsSync(p)) return p;
+  if (fallback && fs.existsSync(fallback)) return fallback;
+  return p;
+}
 
 const OUTPUT_DIR = path.resolve(process.env.COMPILE_OUTPUT_DIR || path.join(__dirname, '..', 'output'));
 const MEMORY_FILE = path.join(OUTPUT_DIR, '.compile-memory.json');
@@ -39,11 +65,15 @@ function run(bin, args, onStderr, opts = {}) {
     const p = spawn(bin, args, { windowsHide: true });
     if (opts.onSpawn) { try { opts.onSpawn(p); } catch {} }
     let out = '', err = '';
-    p.stdout.on('data', d => out += d);
+    // Error handler di stream wajib ada: tanpa ini, EPIPE saat ffmpeg
+    // dimatikan (cancel/OOM) bisa jadi uncaught exception yang mematikan server.
+    p.stdout.on('error', () => {});
+    p.stderr.on('error', () => {});
+    p.stdout.on('data', d => { out += d; if (out.length > 200000) out = out.slice(-100000); });
     p.stderr.on('data', d => {
       err += d;
       if (err.length > 200000) err = err.slice(-100000);
-      if (onStderr) onStderr(String(d));
+      if (onStderr) { try { onStderr(String(d)); } catch {} }
     });
     p.on('error', reject);
     p.on('close', code => resolve({ code, out, err }));
@@ -158,7 +188,7 @@ function buildWatermark(watermark, { FONT }) {
 function buildFilter(opts) {
   const {
     metas, duration, title = 'TOP VIDEO', subtitle = 'KOMPILASI PILIHAN',
-    labels = [], footer = 'Kompilasi otomatis - Auto Posting',
+    labels = [], footer = '',
     cardDur = 2.2, cuts = null, watermark = null, height = 1920,
   } = opts;
 
@@ -234,12 +264,14 @@ function buildFilter(opts) {
 
   // ---- footer + watermark ----
   const deco = [];
-  deco.push(`drawtext=fontfile=${FONT_R}:text='${escText(footer)}':fontcolor=0x8FA0B5:fontsize=${S(22)}:x=(w-text_w)/2:y=${S(1848)}`);
+  if (footer && String(footer).trim()) {
+    deco.push(`drawtext=fontfile=${FONT_R}:text='${escText(footer)}':fontcolor=0x8FA0B5:fontsize=${S(22)}:x=(w-text_w)/2:y=${S(1848)}`);
+  }
   if (watermark && watermark.text) {
     const wm = buildWatermark({ ...watermark, size: S(Number(watermark.size) || 44) }, { FONT });
     if (wm) deco.push(wm);
   }
-  f.push(`[seqv]${deco.join(',')}[vout]`);
+  f.push(deco.length ? `[seqv]${deco.join(',')}[vout]` : `[seqv]null[vout]`);
 
   // ---- audio ----
   const audioChains = [];
@@ -299,8 +331,7 @@ function videoCodecArgs(enc, crf, preset) {
   if (enc === 'h264_amf') return ['-c:v', 'h264_amf', '-quality', 'balanced', '-usage', 'transcoding', '-bf', '0', '-rc', 'cqp', '-qp_i', String(q), '-qp_p', String(Math.min(51, q + 2)), '-qp_b', String(Math.min(51, q + 4))];
   if (enc === 'h264_nvenc') return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', String(q), '-b:v', '0', '-bf', '0'];
   if (enc === 'h264_qsv') return ['-c:v', 'h264_qsv', '-global_quality', String(q), '-bf', '0'];
-  // threads 0 memakai seluruh core CPU yang tersedia.
-  return ['-c:v', 'libx264', '-preset', preset || 'veryfast', '-crf', String(q), '-threads', '0'];
+  return ['-c:v', 'libx264', '-preset', preset || 'veryfast', '-crf', String(q), '-threads', String(FFMPEG_THREADS)];
 }
 
 /**
@@ -310,19 +341,24 @@ function videoCodecArgs(enc, crf, preset) {
 async function compile(opts) {
   const {
     videos, outDir = OUTPUT_DIR,
-    ffmpeg = DEFAULT_FFMPEG, ffprobe = DEFAULT_FFPROBE,
-    fontBold = DEFAULT_FONT_BOLD, fontReg = DEFAULT_FONT_REG,
+    ffmpeg: ffmpegOpt = DEFAULT_FFMPEG, ffprobe: ffprobeOpt = DEFAULT_FFPROBE,
+    fontBold: fontBoldOpt = DEFAULT_FONT_BOLD, fontReg: fontRegOpt = DEFAULT_FONT_REG,
     title = 'TOP VIDEO', subtitle = 'KOMPILASI PILIHAN',
     mode = 'duration', count = 0, targetDuration = 60,
     minCount = 2, crf = 22, preset = 'veryfast',
     useMemory = true, watermark = null, encoder = 'auto', height = 1920,
     previewOnly = false, draft = false, draftSec = 4,
     filterKeyword = '',
+    exclude = [],
     onProc = null, onLog = () => {}, onProgress = () => {},
   } = opts;
 
-  if (!fs.existsSync(ffmpeg)) throw new Error('ffmpeg tidak ditemukan: ' + ffmpeg);
-  if (!fs.existsSync(ffprobe)) throw new Error('ffprobe tidak ditemukan: ' + ffprobe);
+  const ffmpeg = resolveBin(ffmpegOpt);
+  const ffprobe = resolveBin(ffprobeOpt);
+  if (!ffmpeg) throw new Error('ffmpeg tidak ditemukan: ' + ffmpegOpt);
+  if (!ffprobe) throw new Error('ffprobe tidak ditemukan: ' + ffprobeOpt);
+  const fontBold = resolveFont(fontBoldOpt, DEFAULT_FONT_BOLD);
+  const fontReg = resolveFont(fontRegOpt, DEFAULT_FONT_REG);
   if (!videos.length) throw new Error('Tidak ada video untuk dikompilasi');
 
   const cardDur = 2.2;
@@ -340,7 +376,8 @@ async function compile(opts) {
   const usedSet = new Set(mem.used);
   // Kunci memory: Drive pakai id file, lokal pakai "local:<nama>".
   const memKey = v => v.src === 'local' ? ('local:' + v.name) : v.id;
-  let pool = videos.filter(v => !useMemory || !usedSet.has(memKey(v)));
+  const excludeArr = (Array.isArray(exclude) ? exclude : []).map(e => String(e || '').toLowerCase()).filter(Boolean);
+  let pool = videos.filter(v => (!excludeArr.some(e => (v.name || '').toLowerCase().includes(e))) && (!useMemory || !usedSet.has(memKey(v))));
   let didReset = false;
   if (pool.length < effMin) {
     onLog('Stok video baru habis — mengosongkan memory agar bisa dipakai ulang.');
@@ -475,7 +512,9 @@ async function compile(opts) {
     const enc = await resolveEncoder(ffmpeg, encoder, onLog);
     const args = [
       '-y', '-hide_banner', '-loglevel', 'error', '-stats',
-      ...files.flatMap(x => ['-i', x.dest]),
+      ...files.flatMap(x => ['-threads', String(FFMPEG_THREADS), '-i', x.dest]),
+      '-filter_threads', String(FFMPEG_THREADS),
+      '-filter_complex_threads', String(FFMPEG_THREADS),
       '-filter_complex', filter,
       '-map', '[vout]',
       ...(hasAudio ? ['-map', '[aout]'] : []),
@@ -503,8 +542,10 @@ async function compile(opts) {
     let r = await run(ffmpeg, args, onProg, { onSpawn: onProc });
     if (r.code !== 0 && enc !== 'libx264') {
       onLog(`GPU gagal — fallback ke CPU (libx264).`);
-      r = await run(ffmpeg, [...args.slice(0, args.indexOf('-c:v') + 1).slice(0, 0), '-y', '-hide_banner', '-loglevel', 'error', '-stats',
-        ...files.flatMap(x => ['-i', x.dest]),
+      r = await run(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-stats',
+        ...files.flatMap(x => ['-threads', String(FFMPEG_THREADS), '-i', x.dest]),
+        '-filter_threads', String(FFMPEG_THREADS),
+        '-filter_complex_threads', String(FFMPEG_THREADS),
         '-filter_complex', filter,
         '-map', '[vout]',
         ...(hasAudio ? ['-map', '[aout]'] : []),

@@ -230,6 +230,48 @@ setInterval(async () => {
   }
 }, 3000);
 
+/**
+ * Cek kesehatan token YouTube. Yang mati ditandai `expired: true` supaya
+ * UI menampilkan peringatan & tombol perbarui token. Yang hidup lagi
+ * otomatis dilepas tanda expired-nya.
+ */
+async function checkYouTubeTokens() {
+  const data = loadAccounts();
+  const results = [];
+  for (const acc of data.youtube || []) {
+    if (!acc.clientId || !acc.clientSecret || !acc.refreshToken) {
+      if (acc.enabled !== false) updateAccount('youtube', acc.name, { expired: true });
+      results.push({ name: acc.name, ok: false, reason: 'kredensial tidak lengkap' });
+      continue;
+    }
+    try {
+      const { google } = require('googleapis');
+      const oauth2 = new google.auth.OAuth2(acc.clientId, acc.clientSecret);
+      oauth2.setCredentials({ refresh_token: acc.refreshToken });
+      await oauth2.getAccessToken();
+      if (acc.expired) updateAccount('youtube', acc.name, { expired: false });
+      results.push({ name: acc.name, ok: true });
+    } catch (e) {
+      updateAccount('youtube', acc.name, { expired: true });
+      results.push({ name: acc.name, ok: false, reason: (e.response?.data && e.response.data.error) || e.message });
+    }
+  }
+  return results;
+}
+
+/** Perbarui SEMUA token: Facebook (perpanjang) + YouTube (cek & tandai expired). */
+async function refreshAllAccounts() {
+  const fb = config.enableFacebook ? await refreshAllTokens() : { sukses: [], gagal: [] };
+  const yt = await checkYouTubeTokens();
+  return { facebook: fb, youtube: yt };
+}
+
+// Auto-perbarui token: 30 detik setelah start, lalu tiap 6 jam.
+// Tanpa ini token Facebook hanya diperpanjang oleh scheduler CLI (npm start),
+// sehingga kalau hanya pakai dashboard web tokennya tetap expired.
+setTimeout(() => { refreshAllAccounts().catch(e => lastLog.push('[TOKEN][ERR] ' + e.message)); }, 30000);
+setInterval(() => { refreshAllAccounts().catch(e => lastLog.push('[TOKEN][ERR] ' + e.message)); }, 6 * 60 * 60 * 1000);
+
 /** Timer: cek jadwal kompilasi tiap 30 detik (satu render sekaligus). */
 setInterval(() => {
   if (compileState.running || compileState.pendingPost) return;
@@ -240,6 +282,7 @@ setInterval(() => {
   } catch {
     currentHour = now.getHours();
   }
+  let triggered = false;
   for (const sch of loadSchedules()) {
     if (!sch.enabled) continue;
     let due = false;
@@ -263,13 +306,18 @@ setInterval(() => {
     lastLog.push(`[SCHEDULE] Jadwal "${sch.name}" terpicu — mulai kompilasi.`);
     // Masuk melalui endpoint internal agar runner selalu terinisialisasi,
     // meskipun belum ada request /api/compile dari browser.
+    const body = { ...sch.options, _scheduleId: sch.id, _scheduleName: sch.name };
+    const bodyStr = JSON.stringify(body);
     fetch(`http://127.0.0.1:${PORT}/api/compile`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...sch.options, _scheduleId: sch.id, _scheduleName: sch.name }),
+      body: bodyStr,
     }).then(async r => {
       if (!r.ok) throw new Error(await r.text());
-    }).catch(e => lastLog.push(`[SCHEDULE][ERR] ${e.message}`));
+    }).catch(e => {
+      lastLog.push(`[SCHEDULE][ERR] ${e.message}`);
+      try { fs.appendFileSync(path.join(__dirname, '..', 'server_err.txt'), `${new Date().toISOString()} [SCHEDULE][ERR] ${e?.message || e}\n`); } catch {}
+    });
     break; // satu render sekaligus
   }
 }, 30000);
@@ -564,6 +612,18 @@ async function handleApi(req, res, parsed) {
     } catch (e) {
       return send(res, 500, JSON.stringify({ error: e.message }));
     }
+   }
+
+   if (pathname === '/api/accounts/refresh-all' && req.method === 'POST') {
+     try {
+       const r = await refreshAllAccounts();
+       const ytBad = (r.youtube || []).filter(x => !x.ok).map(x => x.name);
+       const fbOk = (r.facebook && r.facebook.sukses) || [];
+       lastLog.push(`[TOKEN] Periksa manual: YouTube ${(r.youtube || []).length - ytBad.length}/${(r.youtube || []).length} valid${ytBad.length ? ', expired: ' + ytBad.join(', ') : ''}${fbOk.length ? `; Facebook diperpanjang: ${fbOk.join(', ')}` : ''}`);
+       return send(res, 200, JSON.stringify({ ok: true, ...r }));
+     } catch (e) {
+       return send(res, 500, JSON.stringify({ error: e.message }));
+     }
    }
 
    if (pathname === '/api/facebook/refresh' && req.method === 'POST') {
@@ -892,9 +952,9 @@ async function handleApi(req, res, parsed) {
     return upload.single('file')(req, res, (err) => {
       if (err) return send(res, 400, JSON.stringify({ error: err.message || 'Upload gagal' }));
       if (!req.file) return send(res, 400, JSON.stringify({ error: 'Tidak ada file' }));
+      // Salin via stream (bukan readFileSync) agar tidak memboros RAM untuk file besar.
       try {
-        const buf = fs.readFileSync(req.file.path);
-        const r = sources.saveUploadedVideo(buf, req.file.originalname);
+        const r = sources.saveUploadedVideoStream(req.file.path, req.file.originalname);
         try { fs.unlinkSync(req.file.path); } catch {}
         lastLog.push(`[SUMBER] Video diupload: ${r.file} (${r.sizeMB}MB)`);
         return send(res, 200, JSON.stringify({ ok: true, ...r }));
@@ -1010,16 +1070,20 @@ async function handleApi(req, res, parsed) {
         watermark: body.watermark || null,
         onProc: p => { compileState.ffmpegProc = p; },
         onProgress: p => {
-          const phase = p.phase || 'download';
-          const prev = compileState.progress || { download: { percent: 0 }, render: { percent: 0 }, upload: { percent: 0 } };
-          compileState.progress = {
-            ...prev,
-            phase,
-            download: phase === 'download' ? { ...prev.download, ...p } : prev.download,
-            render: phase === 'render' ? { ...prev.render, ...p } : prev.render,
-            upload: phase === 'upload' ? { ...prev.upload, ...p } : prev.upload,
-            updatedAt: Date.now(),
-          };
+          try {
+            const phase = p.phase || 'download';
+            const prev = compileState.progress || { download: { percent: 0 }, render: { percent: 0 }, upload: { percent: 0 } };
+            compileState.progress = {
+              ...prev,
+              phase,
+              download: { ...(prev.download || { percent: 0 }), ...(phase === 'download' ? p : {}) },
+              render: { ...(prev.render || { percent: 0 }), ...(phase === 'render' ? p : {}) },
+              upload: { ...(prev.upload || { percent: 0 }), ...(phase === 'upload' ? p : {}) },
+              updatedAt: Date.now(),
+            };
+          } catch (e) {
+            lastLog.push(`[COMPILE][ERR] onProgress: ${e.message}`);
+          }
         },
         onLog: msg => { compileState.logs.push(msg); if (compileState.logs.length > 300) compileState.logs.shift(); },
       };
@@ -1069,7 +1133,11 @@ async function handleApi(req, res, parsed) {
       const folderId = extractFolderId(body.link || body.folderId || '');
       if (!folderId) return send(res, 400, JSON.stringify({ error: 'Link folder Google Drive tidak valid' }));
     }
-    runCompileJob(body).catch(() => {});
+    runCompileJob(body).catch(e => {
+      // Error sudah dicatat di compileState.error & lastLog oleh runCompileJob.
+      // Tapi pastikan juga masuk server_err.txt agar tidak hilang saat server mati.
+      try { fs.appendFileSync(path.join(__dirname, '..', 'server_err.txt'), `${new Date().toISOString()} [COMPILE][ERR] ${e?.stack || e?.message || e}\n`); } catch {}
+    });
     return send(res, 200, JSON.stringify({ ok: true, msg: 'Kompilasi dimulai' }));
   }
 
@@ -1151,7 +1219,7 @@ async function handleApi(req, res, parsed) {
   if (pathname === '/api/schedules' && req.method === 'POST') {
     const body = await parseBody(req);
     if (!body.name || !String(body.name).trim()) return send(res, 400, JSON.stringify({ error: 'Nama jadwal wajib' }));
-    if (!body.options || !body.options.link) return send(res, 400, JSON.stringify({ error: 'Pilih folder Google Drive dulu' }));
+    if (body.source !== 'local' && (!body.options || !body.options.link)) return send(res, 400, JSON.stringify({ error: 'Pilih folder Google Drive dulu' }));
     try {
       const item = addSchedule(body);
       return send(res, 200, JSON.stringify({ ok: true, schedule: item }));
@@ -1178,7 +1246,9 @@ async function handleApi(req, res, parsed) {
     if (!sch) return send(res, 404, JSON.stringify({ error: 'Jadwal tidak ditemukan' }));
     if (compileState.running) return send(res, 409, JSON.stringify({ error: 'Kompilasi sedang berjalan' }));
     markRun(id);
-    runCompileJob(sch.options, { fromSchedule: sch.name }).catch(() => {});
+    runCompileJob(sch.options, { fromSchedule: sch.name }).catch(e => {
+      try { fs.appendFileSync(path.join(__dirname, '..', 'server_err.txt'), `${new Date().toISOString()} [SCHEDULE][ERR] ${e?.stack || e?.message || e}\n`); } catch {}
+    });
     return send(res, 200, JSON.stringify({ ok: true, msg: 'Jadwal dijalankan sekarang' }));
   }
 
@@ -1254,19 +1324,72 @@ const server = http.createServer(async (req, res) => {
     const ext = path.extname(filePath).toLowerCase();
     const mime = MIME[ext] || 'application/octet-stream';
     // video preview: support mp4 inline
-    if (ext === '.mp4') res.writeHead(200, { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes' });
-    else res.writeHead(200, { 'Content-Type': mime });
+    if (ext === '.mp4') {
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600' });
+    } else if (['.html', '.css', '.js'].includes(ext)) {
+      // jangan cache file UI agar perubahan langsung terlihat tanpa hard refresh
+      res.writeHead(200, {
+        'Content-Type': mime,
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      });
+    } else {
+      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=86400' });
+    }
     fs.createReadStream(filePath).pipe(res);
   } else {
     // SPA fallback: serve index.html untuk route tidak dikenal (bukan /api)
     const idx = path.join(PUBLIC_DIR, 'index.html');
     if (fs.existsSync(idx)) {
-      res.writeHead(200, { 'Content-Type': MIME['.html'] });
+      res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store, no-cache, must-revalidate' });
       fs.createReadStream(idx).pipe(res);
     } else {
       send(res, 404, 'Not found', 'text/plain');
     }
   }
+});
+
+// ============================================================
+// CRASH PREVENTION — Wajib di Node.js 24 (unhandled rejection = exit)
+// ============================================================
+
+/** Tangani exception yang tidak ter-catch di level async. */
+process.on('uncaughtException', (err, origin) => {
+  const msg = `[CRASH][uncaughtException] ${err?.message || err} (origin: ${origin || 'unknown'})\n${err?.stack || ''}`;
+  try { lastLog.push(msg); } catch {}
+  try { fs.appendFileSync(path.join(__dirname, '..', 'server_err.txt'), `${new Date().toISOString()} ${msg}\n`); } catch {}
+  // Jangan exit — coba lanjut. Jika ffmpeg crash, compileState masih bisa di-reset.
+  if (err?.message && /EPIPE|ENOENT|EBADF|socket\s*hang|ECONNRESET/i.test(err.message)) {
+    try { lastLog.push('[CRASH] Error I/O/network — server tetap jalan.'); } catch {}
+    return;
+  }
+  // Error Fatal: reset compile state dan coba lanjut
+  if (compileState.running) {
+    try {
+      compileState.running = false;
+      compileState.error = '[CRASH] ' + (err?.message || String(err));
+      compileState.ffmpegProc = null;
+      compileState.posting = false;
+    } catch {}
+  }
+  try { lastLog.push('[CRASH] Server survive — compile state di-reset.'); } catch {}
+});
+
+/** Tangani promise rejection yang tidak ter-catch. */
+process.on('unhandledRejection', (reason, promise) => {
+  const msg = `[CRASH][unhandledRejection] ${reason?.message || reason}\n${reason?.stack || ''}`;
+  try { lastLog.push(msg); } catch {}
+  try { fs.appendFileSync(path.join(__dirname, '..', 'server_err.txt'), `${new Date().toISOString()} ${msg}\n`); } catch {}
+  // Reset compile state jika sedang running
+  if (compileState?.running) {
+    try {
+      compileState.running = false;
+      compileState.error = '[unhandledRejection] ' + (reason?.message || String(reason));
+      compileState.ffmpegProc = null;
+    } catch {}
+  }
+  try { lastLog.push('[CRASH] Unhandled promise rejected — server tetap jalan.'); } catch {}
 });
 
 function listenWithFallback(port, maxTries = 10) {

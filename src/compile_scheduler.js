@@ -51,8 +51,14 @@ function updateSchedule(id, patch) {
   if (!item) return null;
   if (patch.name !== undefined) item.name = String(patch.name).slice(0, 60);
   if (patch.enabled !== undefined) item.enabled = !!patch.enabled;
-  if (patch.type !== undefined) item.type = patch.type === 'interval' ? 'interval' : 'daily';
+  if (patch.type !== undefined) item.type = patch.type === 'interval' ? 'interval' : patch.type === 'once' ? 'once' : 'daily';
+  if (patch.runAt !== undefined) item.runAt = patch.runAt || null;
   if (patch.hours !== undefined) item.hours = patch.hours.map(Number).filter(n => n >= 0 && n <= 23);
+  if (patch.times !== undefined) {
+    item.times = patch.times.map(String).filter(t => /^([01]\d|2[0-3]):[0-5]\d$/.test(t));
+    // jaga konsistensi: hours selalu turunan dari times
+    item.hours = [...new Set(item.times.map(t => Number(t.split(':')[0])))].sort((a, b) => a - b);
+  }
   if (patch.everyMinutes !== undefined) item.everyMinutes = Math.max(1, Math.min(1440, Number(patch.everyMinutes) || 60));
   if (patch.options !== undefined) item.options = patch.options;
   saveSchedules(list);
